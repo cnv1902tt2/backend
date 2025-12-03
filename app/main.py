@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .core.database import engine, Base, SessionLocal
@@ -46,5 +46,9 @@ def root():
     return {"status": "ok"}
 
 @app.get("/health")
-def health():
-    return {"status": "healthy"}
+def health_get():
+    return {"status": "ok"}
+
+@app.head("/health")
+def health_head():
+    return Response(status_code=200)
