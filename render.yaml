@@ -3,30 +3,46 @@ services:
     name: apikeymanagement
     runtime: python
     plan: free
+
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+
+      # Database
       - key: DATABASE_URL
-        sync: false
+        sync: 'postgresql://neondb_owner:npg_0RL5afcNplGy@ep-cool-credit-a1qfzj69-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
+
+      # Auth
       - key: JWT_SECRET_KEY
         generateValue: true
+
+      # MAIL CONFIG
+      - key: MAIL_MAILER
+        value: smtp
       - key: MAIL_HOST
         value: smtp.gmail.com
       - key: MAIL_PORT
         value: 587
       - key: MAIL_USERNAME
-        sync: false
+        value: cnv1902@gmail.com
       - key: MAIL_PASSWORD
-        sync: false
+        value: "voof ymlb afdm kfrj"
+      - key: MAIL_ENCRYPTION
+        value: null
       - key: MAIL_FROM_ADDRESS
-        sync: false
+        value: cnv1902@gmail.com
       - key: MAIL_FROM_NAME
-        value: KEY MANAGEMENT ADMINISTRATOR
+        value: "KEY MANAGEMENT ADMINISTRATOR"
+
+      # CORS
       - key: CORS_ORIGINS
         value: "*"
+
+      # Token & OTP
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
-        value: 60
+        value: 10080
       - key: OTP_EXPIRE_MINUTES
-        value: 10
+        value: 1
