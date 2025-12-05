@@ -20,7 +20,7 @@ def _expiry_for_type(t: str) -> datetime | None:
     if t == "year":
         return datetime.utcnow() + timedelta(days=365)
     if t == "lifetime":
-        return None
+        return datetime.utcnow() + timedelta(days=365*1000)
     raise HTTPException(status_code=400, detail="Invalid type: must be trial/month/year/lifetime")
 
 
