@@ -84,27 +84,56 @@ def delete_key(key_value: str, db: Session = Depends(get_db)):
 
 @router.post("/validate")
 def validate(payload: KeyValidateRequest, db: Session = Depends(get_db)):
-    record = db.query(KeyRecord).filter(KeyRecord.key_value == payload.key_value).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="Key not found")
-    if not record.is_active:
-        raise HTTPException(status_code=403, detail="Key is locked")
-    if record.expired_at and record.expired_at < datetime.utcnow():
-        raise HTTPException(status_code=403, detail="Key expired")
+    record = db.query(KeyRecord).filter(
+        KeyRecord.key_value == payload.key_value
+    ).first()
 
-    # Update machine info and last_check
+    # Không tìm thấy key
+    if not record:
+        return {
+            "valid": False,
+            "is_active": False,
+            "expired_at": None,
+            "note": "Key not found"
+        }
+
+    # Key bị khóa (is_active = false)
+    if not record.is_active:
+        return {
+            "valid": False,
+            "is_active": False,
+            "expired_at": record.expired_at,
+            "note": "Key is locked"
+        }
+
+    # Key hết hạn
+    if record.expired_at and record.expired_at < datetime.utcnow():
+        return {
+            "valid": False,
+            "is_active": True,
+            "expired_at": record.expired_at,
+            "note": "Key expired"
+        }
+
+    # Update thông tin máy
     record.machine_name = payload.machine_name or record.machine_name
     record.os_version = payload.os_version or record.os_version
     record.revit_version = payload.revit_version or record.revit_version
     record.cpu_info = payload.cpu_info or record.cpu_info
     record.ip_address = payload.ip_address or record.ip_address
-    record.machine_hash = payload.machine_hash or record.machine_hash
+
+    # Ghi machine_hash nếu chưa có — tránh override lần sau
+    if not record.machine_hash:
+        record.machine_hash = payload.machine_hash
+
     record.last_check = datetime.utcnow()
     db.commit()
 
+    # Trả về thông tin key hợp lệ
     return {
         "valid": True,
+        "is_active": True,
         "expired_at": record.expired_at,
-        "is_active": record.is_active,
-        "note": record.note,
+        "machine_hash": record.machine_hash,
+        "note": record.note or "Valid license"
     }
