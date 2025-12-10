@@ -49,11 +49,23 @@ class VersionCreate(BaseModel):
     version: str
     release_notes: str
     download_url: str
-    file_size: int
     checksum_sha256: str
     update_type: str = "optional"
+    file_size: Optional[int] = 0  # Optional - will be calculated from file if not provided
     force_update: bool = False
     min_required_version: str = "1.0.0.0"
+
+class VersionUpdate(BaseModel):
+    """Model cho partial update - tất cả fields đều optional"""
+    version: Optional[str] = None
+    release_notes: Optional[str] = None
+    download_url: Optional[str] = None
+    file_size: Optional[int] = None
+    checksum_sha256: Optional[str] = None
+    update_type: Optional[str] = None
+    force_update: Optional[bool] = None
+    min_required_version: Optional[str] = None
+    is_active: Optional[bool] = None
 
 class VersionResponse(BaseModel):
     id: int
@@ -249,6 +261,89 @@ async def health_check(db: Session = Depends(get_db)):
     }
 
 
+@router.get("/versions/public/active")
+async def get_public_active_versions(db: Session = Depends(get_db)):
+    """Get all active versions - Public endpoint for download page (no auth required)"""
+    versions = db.query(UpdateVersion).filter(
+        UpdateVersion.is_active == True
+    ).order_by(desc(UpdateVersion.release_date)).all()
+    
+    result = []
+    for v in versions:
+        # Calculate download count from statistics
+        download_count = db.query(func.count(UpdateStatistic.id)).filter(
+            UpdateStatistic.target_version == v.version,
+            UpdateStatistic.action == "download"
+        ).scalar() or 0
+        
+        # Calculate install count from statistics
+        install_count = db.query(func.count(UpdateStatistic.id)).filter(
+            UpdateStatistic.target_version == v.version,
+            UpdateStatistic.action == "install",
+            UpdateStatistic.status == "success"
+        ).scalar() or 0
+        
+        result.append({
+            "id": v.id,
+            "version": v.version,
+            "release_date": v.release_date.isoformat(),
+            "release_notes": v.release_notes,
+            "download_url": v.download_url,
+            "file_size": v.file_size,
+            "checksum_sha256": v.checksum_sha256,
+            "update_type": v.update_type,
+            "force_update": v.force_update,
+            "min_required_version": v.min_required_version,
+            "is_active": v.is_active,
+            "created_at": v.created_at.isoformat(),
+            "download_count": download_count,
+            "install_count": install_count
+        })
+    
+    return result
+
+
+@router.get("/latest")
+async def get_latest_version(db: Session = Depends(get_db)):
+    """Get the latest active version - Public endpoint (no auth required)"""
+    latest = db.query(UpdateVersion).filter(
+        UpdateVersion.is_active == True
+    ).order_by(desc(UpdateVersion.release_date)).first()
+    
+    if not latest:
+        raise HTTPException(status_code=404, detail="No active version found")
+    
+    # Calculate download count
+    download_count = db.query(func.count(UpdateStatistic.id)).filter(
+        UpdateStatistic.target_version == latest.version,
+        UpdateStatistic.action == "download"
+    ).scalar() or 0
+    
+    # Calculate install count
+    install_count = db.query(func.count(UpdateStatistic.id)).filter(
+        UpdateStatistic.target_version == latest.version,
+        UpdateStatistic.action == "install",
+        UpdateStatistic.status == "success"
+    ).scalar() or 0
+    
+    return {
+        "id": latest.id,
+        "version": latest.version,
+        "release_date": latest.release_date.isoformat(),
+        "release_notes": latest.release_notes,
+        "download_url": latest.download_url,
+        "file_size": latest.file_size,
+        "checksum_sha256": latest.checksum_sha256,
+        "update_type": latest.update_type,
+        "force_update": latest.force_update,
+        "min_required_version": latest.min_required_version,
+        "is_active": latest.is_active,
+        "created_at": latest.created_at.isoformat(),
+        "download_count": download_count,
+        "install_count": install_count
+    }
+
+
 # ==================== Admin Endpoints (Require Auth) ====================
 
 @router.get("/versions", response_model=List[VersionResponse])
@@ -285,17 +380,37 @@ async def create_version(
 ):
     """Publish một version mới - Admin only"""
     
+    # Debug logging
+    print("=== CREATE VERSION DEBUG ===")
+    print(f"Received data: {data.model_dump()}")
+    print(f"version: {data.version} (type: {type(data.version)})")
+    print(f"file_size: {data.file_size} (type: {type(data.file_size)})")
+    print(f"force_update: {data.force_update} (type: {type(data.force_update)})")
+    print(f"update_type: {data.update_type} (type: {type(data.update_type)})")
+    print("============================")
+    
     # Check if version already exists
     existing = db.query(UpdateVersion).filter(UpdateVersion.version == data.version).first()
     if existing:
         raise HTTPException(status_code=400, detail=f"Version {data.version} already exists")
+    
+    # Calculate file_size from file if not provided or is 0
+    file_size = data.file_size or 0
+    if file_size <= 0 and data.download_url:
+        try:
+            import os
+            if os.path.exists(data.download_url):
+                file_size = os.path.getsize(data.download_url)
+        except Exception as e:
+            print(f"Could not get file size: {e}")
+            file_size = 0
     
     new_version = UpdateVersion(
         version=data.version,
         release_date=datetime.utcnow(),
         release_notes=data.release_notes,
         download_url=data.download_url,
-        file_size=data.file_size,
+        file_size=file_size,
         checksum_sha256=data.checksum_sha256,
         update_type=data.update_type,
         force_update=data.force_update,
@@ -321,6 +436,70 @@ async def create_version(
         is_active=new_version.is_active,
         created_at=new_version.created_at.isoformat()
     )
+
+
+@router.put("/versions/{version_id}")
+async def update_version(
+    version_id: int,
+    version_data: VersionUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Update version với partial data - Admin only"""
+    version = db.query(UpdateVersion).filter(UpdateVersion.id == version_id).first()
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    # Update only provided fields (exclude version field - cannot be changed)
+    update_data = version_data.model_dump(exclude_unset=True)
+    
+    # Remove version field if present - version cannot be changed
+    if 'version' in update_data:
+        del update_data['version']
+    
+    print(f"Updating version {version_id} with data: {update_data}")
+    
+    for field, value in update_data.items():
+        if hasattr(version, field):
+            print(f"  Setting {field} = {value} (type: {type(value)})")
+            setattr(version, field, value)
+    
+    try:
+        db.commit()
+        db.refresh(version)
+        print(f"Update successful for version {version_id}")
+        
+        # Calculate download_count and install_count from statistics table
+        download_count = db.query(func.count(UpdateStatistic.id)).filter(
+            UpdateStatistic.target_version == version.version,
+            UpdateStatistic.action == "download"
+        ).scalar() or 0
+        
+        install_count = db.query(func.count(UpdateStatistic.id)).filter(
+            UpdateStatistic.target_version == version.version,
+            UpdateStatistic.action == "install",
+            UpdateStatistic.status == "success"
+        ).scalar() or 0
+        
+        return {
+            "id": version.id,
+            "version": version.version,
+            "release_date": version.release_date.isoformat(),
+            "release_notes": version.release_notes,
+            "download_url": version.download_url,
+            "file_size": version.file_size,
+            "checksum_sha256": version.checksum_sha256,
+            "update_type": version.update_type,
+            "force_update": version.force_update,
+            "min_required_version": version.min_required_version,
+            "is_active": version.is_active,
+            "created_at": version.created_at.isoformat(),
+            "download_count": download_count,
+            "install_count": install_count
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=f"Update failed: {str(e)}")
 
 
 @router.put("/versions/{version_id}/deactivate")
