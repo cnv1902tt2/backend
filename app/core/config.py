@@ -20,6 +20,10 @@ class Settings:
 
     OTP_EXPIRE_MINUTES: int = int(os.getenv("OTP_EXPIRE_MINUTES", "10"))
 
+    # Chatbot RAG Settings
+    CACHE_SIMILARITY_THRESHOLD: float = float(os.getenv("CACHE_SIMILARITY_THRESHOLD", "0.8"))
+    NUMBER_FEW_SHOT: int = int(os.getenv("NUMBER_FEW_SHOT", "5"))
+
 settings = Settings()
 
 def access_token_expires():

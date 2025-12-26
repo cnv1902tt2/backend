@@ -1,17 +1,20 @@
 # Chat Router - API endpoints cho chat history và RAG
-# Tính năng: Lưu lịch sử, kiểm tra cache, few-shot prompting
+# Tính năng: Lưu lịch sử, kiểm tra cache, RAG + LLM processing
 # Author: SimpleBIM Team
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from typing import Optional, List
 from datetime import datetime
 import json
 import re
+import asyncio
+import logging
 
 from ..core.database import get_db
 from ..core.security import get_current_user_optional
+from ..core.config import settings
 from ..models.user import User
 from ..models.chat import ChatSession, ChatMessage, CachedQuery
 from ..schemas.chat import (
@@ -19,7 +22,10 @@ from ..schemas.chat import (
     SessionListResponse, ChatRequest, ChatResponse, MessageResponse,
     CachedQueryResponse, ChatStatistics
 )
+from ..services.rag_service import run_rag_pipeline, build_llm_prompt, is_greeting_or_general_question, build_greeting_prompt
+from ..services.llm_service import get_llm_service
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 
@@ -55,11 +61,14 @@ def calculate_similarity(query1: str, query2: str) -> float:
     return len(intersection) / len(union)
 
 
-def find_similar_cached_query(db: Session, query: str, threshold: float = 0.8) -> Optional[CachedQuery]:
+def find_similar_cached_query(db: Session, query: str, threshold: float = None) -> Optional[CachedQuery]:
     """
     Tìm cached query tương tự trong database.
     Returns None nếu không tìm thấy query đủ tương tự.
     """
+    if threshold is None:
+        threshold = settings.CACHE_SIMILARITY_THRESHOLD
+    
     normalized = normalize_query(query)
     
     # Exact match trước
@@ -222,7 +231,7 @@ def delete_session(
 # ==================== Chat Endpoint ====================
 
 @router.post("/send", response_model=ChatResponse)
-def send_message(
+async def send_message(
     request: ChatRequest,
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user_optional)
@@ -234,7 +243,7 @@ def send_message(
     1. Tạo hoặc lấy session
     2. Lưu message của user
     3. Kiểm tra cache - nếu có query tương tự, trả về từ cache
-    4. Nếu không, trả về placeholder (frontend sẽ gọi LLM)
+    4. Nếu không, chạy RAG pipeline + gọi LLM
     5. Lưu response vào cache
     """
     user_id = current_user.id if current_user else None
@@ -258,13 +267,14 @@ def send_message(
         db.commit()
         db.refresh(session)
     
-    # 2. Lưu message của user
+    # 2. Lưu message của user VÀ COMMIT NGAY để có trong history
     user_message = ChatMessage(
         session_id=session.id,
         role="user",
         content=request.query
     )
     db.add(user_message)
+    db.commit()  # Commit ngay để message xuất hiện trong chat history
     
     # 3. Kiểm tra cache
     cached = find_similar_cached_query(db, request.query, threshold=0.8)
@@ -272,6 +282,7 @@ def send_message(
     is_from_cache = False
     similarity_score = None
     response_content = ""
+    sources = []
     
     if cached:
         # Cache hit! Trả về response từ database
@@ -282,9 +293,61 @@ def send_message(
         # Cập nhật hit count
         cached.hit_count += 1
         cached.last_used_at = datetime.utcnow()
+        
+        logger.info(f"Cache hit! similarity={similarity_score}")
     else:
-        # Cache miss - trả về empty để frontend gọi LLM
-        response_content = "__NEEDS_LLM__"
+        # Cache miss - Chạy RAG + LLM
+        logger.info("Cache miss - running RAG + LLM pipeline")
+        
+        try:
+            # 3a. Lấy chat history từ session TRƯỚC
+            chat_history = []
+            if session:
+                recent_messages = db.query(ChatMessage).filter(
+                    ChatMessage.session_id == session.id
+                ).order_by(desc(ChatMessage.created_at)).limit(10).all()  # Lấy 10 messages gần nhất
+                
+                chat_history = [
+                    {"role": msg.role, "content": msg.content}
+                    for msg in reversed(recent_messages)
+                ]
+                logger.info(f"Chat history loaded: {len(chat_history)} messages")
+                # Log chi tiết để debug
+                for i, msg in enumerate(chat_history):
+                    logger.debug(f"  [{i}] {msg['role']}: {msg['content'][:50]}...")
+            
+            # 3b. Kiểm tra nếu là lời chào hoặc câu hỏi chung chung
+            if is_greeting_or_general_question(request.query):
+                # Sử dụng prompt đơn giản, không có few-shot examples
+                prompt = build_greeting_prompt(request.query)
+                sources = []
+                logger.info("Detected greeting/general question - using simple prompt")
+            else:
+                # 3c. Chạy RAG pipeline đầy đủ
+                context, few_shot, sources = run_rag_pipeline(request.query)
+                # Truyền chat_history vào prompt để LLM có thể tham khảo
+                prompt = build_llm_prompt(request.query, context, few_shot, chat_history)
+            
+            # 3d. Gọi LLM
+            llm_service = get_llm_service()
+            if llm_service.is_configured():
+                response_content = await llm_service.generate_response(prompt, chat_history)
+                logger.info(f"LLM response received, provider={llm_service.get_provider()}")
+            else:
+                response_content = "⚠️ LLM chưa được cấu hình. Vui lòng thiết lập GEMINI_API_KEY hoặc HF_TOKEN trong file .env của backend."
+            
+            # 3e. Cache query mới nếu response hợp lệ
+            if response_content and not response_content.startswith("⚠️"):
+                normalized = normalize_query(request.query)
+                new_cache = CachedQuery(
+                    query_normalized=normalized,
+                    response=response_content
+                )
+                db.add(new_cache)
+                
+        except Exception as e:
+            logger.error(f"Error in RAG/LLM pipeline: {e}")
+            response_content = f"⚠️ Lỗi xử lý: {str(e)}"
     
     # 4. Lưu response message
     assistant_message = ChatMessage(
@@ -308,7 +371,7 @@ def send_message(
         response=response_content,
         is_from_cache=is_from_cache,
         similarity_score=similarity_score,
-        sources=[]
+        sources=sources
     )
 
 

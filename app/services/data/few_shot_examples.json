@@ -1,0 +1,70 @@
+[
+    {
+        "question": "Xin chào",
+        "answer": "Chào bạn, tôi là trợ lý ảo của SimpleBIM. Tôi ở đây để giúp bạn với các câu hỏi về phần mềm SimpleBIM. Hãy cho tôi biết bạn cần hỗ trợ gì nhé!"
+    },
+    {
+        "question": "Phần mềm này do ai phát triển?",
+        "answer": "Chào bạn, Ý tưởng này được thầy Phan Huy Thiện là giảng viên trường Đại học Vinh đề xuất và xây dựng. Phiên bản đầu tiên được xây dựng dựa trên mã nguồn pyRevit, sau đó được bạn Nguyễn Văn Chương xây dựng lại bằng ngôn ngữ C# và nâng cấp các tính năng update, quản lý key xác thực, ...."
+    },
+    {
+        "question": "Tôi muốn xây dựng chức năng mới trong giao diện Qs",
+        "answer": "Để tạo chức năng mới trong giao diện Qs (tab SIMPLEBIM.QS), bạn cần làm 2 việc:\n\n**Việc 1: Tạo file Command mới**\n1. Mở Solution Explorer (Ctrl+Alt+L)\n2. Tìm thư mục SimpleBIM → Commands → Qs\n3. Chuột phải vào thư mục Qs → Add → Class...\n4. Đặt tên file (ví dụ: MyNewCommand.cs) → Click Add\n5. Xóa nội dung mặc định, copy code mẫu Command vào\n6. Đảm bảo namespace là: SimpleBIM.Commands.Qs\n7. Lưu file (Ctrl+S)\n\n**Việc 2: Thêm button vào Ribbon**\n1. Mở file SimpleBIM → Ribbon → Panels → QsPanel.cs\n2. Tìm method CreateXxxPanel() phù hợp\n3. Thêm dòng AddButton() với tên Command vừa tạo\n4. Thêm icon vào Icons/16/ và Icons/32/ (nhớ đổi Build Action → Embedded Resource)\n5. Build lại (Ctrl+Shift+B)"
+    },
+    {
+        "question": "Tôi muốn tạo chức năng mới trong tab As",
+        "answer": "Để tạo chức năng mới trong tab As (SIMPLEBIM.AS), bạn cần:\n\n**Bước 1: Tạo Command**\n1. Mở Solution Explorer (Ctrl+Alt+L)\n2. Chuột phải thư mục SimpleBIM → Commands → As → Add → Class...\n3. Đặt tên (ví dụ: MyCommand.cs), click Add\n4. Copy code mẫu IExternalCommand vào, đảm bảo namespace là SimpleBIM.Commands.As\n\n**Bước 2: Thêm Button vào Ribbon**\n1. Mở file SimpleBIM → Ribbon → Panels → AsPanel.cs\n2. Thêm dòng AddButton() vào method phù hợp\n3. Thêm icon 16x16 và 32x32, đổi Build Action → Embedded Resource\n4. Build (Ctrl+Shift+B)"
+    },
+    {
+        "question": "Làm sao để tạo file code chức năng mới trong cửa sổ As?",
+        "answer": "1. Mở Visual Studio 2022, nhìn bên trái màn hình tìm cửa sổ Solution Explorer (nếu không thấy, nhấn Ctrl+Alt+L)\n2. Tìm thư mục SimpleBIM → Commands → As\n3. Chuột phải vào thư mục As → chọn Add → chọn Class...\n4. Trong ô Name, gõ tên file (ví dụ: MyCommand.cs) → nhấn Add\n5. File mới sẽ mở ra, xóa hết nội dung cũ và dán code của bạn vào\n6. Quan trọng: Tìm dòng \"namespace\" (khoảng dòng 5-10), đảm bảo nó là: namespace SimpleBIM.Commands.As\n7. Tìm dòng \"public class\", đổi tên class cho trùng tên file. Ví dụ file MyCommand.cs thì phải là: public class MyCommand : IExternalCommand\n8. Nhấn Ctrl+S để lưu file"
+    },
+    {
+        "question": "Cách build project?",
+        "answer": "1. Nhìn trên thanh công cụ (toolbar) của Visual Studio, tìm ô dropdown có chữ \"Debug\"\n2. Click vào ô đó, chọn \"Release\" thay vì \"Debug\"\n3. Vào menu Build (trên cùng) → chọn Rebuild Solution\n4. Hoặc nhấn tổ hợp phím Ctrl+Shift+B\n5. Nhìn xuống cửa sổ Output phía dưới, đợi đến khi hiện \"Build succeeded\"\n6. File DLL sau khi build nằm ở: output/SimpleBIM.dll"
+    },
+    {
+        "question": "Làm sao để đổi version?",
+        "answer": "1. Trong Solution Explorer, tìm thư mục SimpleBIM → Update → ForceVersion.cs\n2. Double-click để mở file ForceVersion.cs\n3. Tìm dòng có chữ: public static Version ForcedVersion = new Version(\"x.x.x\");\n4. Đổi số trong ngoặc kép thành version mới. Ví dụ: new Version(\"1.2.4\")\n5. Nhấn Ctrl+S để lưu file"
+    },
+    {
+        "question": "Cách làm rối code?",
+        "answer": "1. Mở thư mục ConfuserEx-GUI trong máy tính\n2. Double-click file ConfuserEx.exe để mở chương trình\n3. Kéo thả file output/SimpleBIM.dll vào cửa sổ ConfuserEx\n4. Click tab \"Settings\", trong mục Rules chọn preset \"Maximum\"\n5. Click tab \"Protect!\", nhấn nút \"Protect!\"\n6. Đợi đến khi thanh tiến trình chuyển màu xanh = thành công\n7. File đã rối nằm ở: output/Confused/SimpleBIM.dll"
+    },
+    {
+        "question": "Cách tính SHA256?",
+        "answer": "1. Nhấn phím Windows, gõ \"PowerShell\", click vào Windows PowerShell\n2. Gõ lệnh: Get-FileHash -Algorithm SHA256 \"đường_dẫn_đến_file.zip\"\n3. Ví dụ: Get-FileHash -Algorithm SHA256 \"C:\\Users\\TenBan\\Desktop\\SimpleBIM_v1.2.4.zip\"\n4. Nhấn Enter, đợi kết quả hiện ra\n5. Copy dãy chữ dài ở cột Hash (đây là mã SHA256)\n6. Lưu mã này để dùng khi cập nhật website"
+    },
+    {
+        "question": "Cách chuyển chức năng từ ribbon AS sang QS?",
+        "answer": "1. Mở file SimpleBIM → Ribbon → Panels → AsPanel.cs\n2. Tìm dòng AddButton() của chức năng cần chuyển, bôi đen và Copy (Ctrl+C)\n3. Mở file QsPanel.cs trong cùng thư mục Panels\n4. Paste (Ctrl+V) dòng AddButton() vào vị trí phù hợp\n5. Trong dòng vừa paste, tìm chữ \"SimpleBIM.Commands.As\" → đổi thành \"SimpleBIM.Commands.Qs\"\n6. Quay lại AsPanel.cs, xóa dòng AddButton() cũ\n7. Trong Solution Explorer, tìm file Command trong Commands/As/, kéo thả sang Commands/Qs/\n8. Mở file Command vừa di chuyển, tìm dòng namespace, đổi từ \"SimpleBIM.Commands.As\" thành \"SimpleBIM.Commands.Qs\"\n9. Nhấn Ctrl+Shift+B để build lại"
+    },
+    {
+        "question": "Cách thêm button mới vào ribbon?",
+        "answer": "1. Tạo file Command mới trong thư mục Commands/ (xem hướng dẫn tạo Command)\n2. Mở file Panel tương ứng: AsPanel.cs, MEPFPanel.cs hoặc QsPanel.cs\n3. Tìm method CreateXxxPanel(), thêm dòng AddButton() vào bên trong\n4. Chuẩn bị 2 file icon: 1 file 16x16 pixels, 1 file 32x32 pixels (đặt tên giống nhau, ví dụ: myicon.png)\n5. Kéo thả icon vào thư mục Icons/16/ và Icons/32/\n6. QUAN TRỌNG: Chuột phải vào mỗi file icon → Properties (hoặc nhấn F4)\n7. Tìm mục \"Build Action\", click vào, đổi từ \"Content\" thành \"Embedded Resource\"\n8. Làm bước 6-7 cho cả 2 file icon\n9. Nhấn Ctrl+Shift+B để build lại"
+    },
+    {
+        "question": "Tại sao icon không hiển thị?",
+        "answer": "Nguyên nhân: Chưa đổi Build Action của file icon.\n\nCách sửa:\n1. Mở Solution Explorer (Ctrl+Alt+L)\n2. Tìm file icon trong thư mục Icons/16/ và Icons/32/\n3. Chuột phải vào file icon → chọn Properties (hoặc nhấn F4)\n4. Nhìn cửa sổ Properties bên phải, tìm dòng \"Build Action\"\n5. Click vào giá trị bên phải (đang là \"Content\")\n6. Đổi thành \"Embedded Resource\"\n7. Làm tương tự cho file icon còn lại (cả 16x16 và 32x32)\n8. Nhấn Ctrl+Shift+B để build lại\n9. Mở Revit để kiểm tra icon đã hiển thị"
+    },
+    {
+        "question": "Tôi vừa hỏi gì?",
+        "answer": "Tôi không có khả năng nhớ lịch sử trò chuyện. Vui lòng hỏi lại câu hỏi của bạn."
+    },
+    {
+        "question": "Tôi muốn tạo tab ribbon hoàn toàn mới",
+        "answer": "Để tạo Tab Ribbon HOÀN TOÀN MỚI (ví dụ: tab BS), bạn cần:\n\n**Bước 1: Tạo file Panel mới**\n1. Mở Solution Explorer, tìm SimpleBIM → Ribbon → Panels\n2. Chuột phải QsPanel.cs → Copy, sau đó Paste\n3. Đổi tên file mới thành BsPanel.cs\n\n**Bước 2: Chỉnh sửa BsPanel.cs**\n- Đổi \"QsPanel\" → \"BsPanel\"\n- Đổi \"Qs\" → \"Bs\", \"QS\" → \"BS\"\n\n**Bước 3: Đăng ký trong RibbonManager.cs**\n1. Mở SimpleBIM → Ribbon → RibbonManager.cs\n2. Copy đoạn tạo tab QS, paste bên dưới\n3. Đổi \"SIMPLEBIM.QS\" → \"SIMPLEBIM.BS\"\n\n**Bước 4: Tạo thư mục Commands/Bs**\n\n**Bước 5: Build (Ctrl+Shift+B)**"
+    },
+    {
+        "question": "Làm sao lấy link tải trực tiếp từ GitHub?",
+        "answer": "Để lấy link tải trực tiếp từ GitHub Release:\n\n1. Vào trang Release của repository\n2. Chuột phải vào tên file ZIP → \"Copy link address\"\n3. Link đúng có dạng: https://github.com/owner/repo/releases/download/v1.2.4/filename.zip\n\n**Lưu ý quan trọng:**\n- Link ĐÚNG chứa: /releases/download/\n- Link SAI chứa: /releases/tag/ (chỉ hiển thị trang, không tải được)"
+    },
+    {
+        "question": "Build bị lỗi thiếu thư viện",
+        "answer": "Lỗi thiếu thư viện (Missing Reference) xảy ra khi chưa thêm Revit API:\n\n1. Chuột phải vào \"References\" trong Solution Explorer\n2. Chọn \"Add Reference...\"\n3. Click \"Browse\" và tìm tới thư mục Revit:\n   C:\\Program Files\\Autodesk\\Revit 2024\n4. Chọn 2 file: RevitAPI.dll và RevitAPIUI.dll\n5. Click OK\n6. Build lại (Ctrl+Shift+B)"
+    },
+    {
+        "question": "Cách debug trong Revit?",
+        "answer": "Để debug Add-in trong Revit:\n\n1. Chuột phải project → Properties → Tab Debug\n2. Chọn \"Start external program\"\n3. Browse tới: C:\\Program Files\\Autodesk\\Revit 2024\\Revit.exe\n4. Đặt breakpoint (click lề trái dòng code)\n5. Nhấn F5 để chạy Debug\n6. Revit sẽ mở, kích hoạt chức năng cần test\n7. VS sẽ dừng tại breakpoint\n\n**Phím tắt:** F10 (Step Over), F11 (Step Into), F5 (Continue)"
+    }
+]
