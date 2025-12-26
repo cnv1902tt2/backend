@@ -46,7 +46,7 @@ class LLMService:
             return LLMConfig(
                 provider="huggingface",
                 api_key=hf_token,
-                model="Qwen/Qwen2.5-7B-Instruct"
+                model="Qwen/Qwen2.5-7B-Instruct"  # Model miễn phí trên HF
             )
         
         logger.warning("No LLM API key found in environment")
@@ -114,25 +114,23 @@ class LLMService:
             from huggingface_hub import InferenceClient
             
             if self._hf_client is None:
+                # Thay đổi: dùng provider="together" (hoặc "auto" để tự chọn nếu có nhiều)
                 self._hf_client = InferenceClient(
-                    model=self.config.model,
-                    token=self.config.api_key
+                    provider="together",  # Hoặc "auto" nếu bạn muốn router tự chọn provider tốt nhất
+                    token=self.config.api_key  # Dùng token thay api_key cho rõ ràng
                 )
             
-            # Build messages
+            # Build messages (giữ nguyên phần system + history + prompt của bạn)
             messages = []
-            
-            # System message - BẮT BUỘC tiếng Việt
             system_msg = """Bạn là trợ lý AI hỗ trợ phát triển SimpleBIM - Revit Add-in (C#).
 
-QUY TẮC BẮT BUỘC:
-1. LUÔN trả lời bằng TIẾNG VIỆT - KHÔNG BAO GIỜ dùng tiếng Trung, tiếng Anh hoặc ngôn ngữ khác
-2. Nếu người dùng hỏi về lịch sử chat ("tôi vừa hỏi gì", "câu hỏi trước"), trả lời: "Tôi không có khả năng nhớ lịch sử trò chuyện. Vui lòng hỏi lại câu hỏi của bạn."
-3. KHÔNG BAO GIỜ bịa đặt hoặc tự tạo ra lịch sử chat không có thật
-4. Trả lời ngắn gọn, hữu ích, đúng trọng tâm"""
+    QUY TẮC BẮT BUỘC:
+    1. LUÔN trả lời bằng TIẾNG VIỆT - KHÔNG BAO GIỜ dùng tiếng Trung, tiếng Anh hoặc ngôn ngữ khác
+    2. Nếu người dùng hỏi về lịch sử chat ("tôi vừa hỏi gì", "câu hỏi trước"), trả lời: "Tôi không có khả năng nhớ lịch sử trò chuyện. Vui lòng hỏi lại câu hỏi của bạn."
+    3. KHÔNG BAO GIỜ bịa đặt hoặc tự tạo ra lịch sử chat không có thật
+    4. Trả lời ngắn gọn, hữu ích, đúng trọng tâm"""
             messages.append({"role": "system", "content": system_msg})
             
-            # Chat history
             if chat_history:
                 for msg in chat_history[-6:]:
                     messages.append({
@@ -140,11 +138,11 @@ QUY TẮC BẮT BUỘC:
                         "content": msg.get("content", "")
                     })
             
-            # Current prompt
             messages.append({"role": "user", "content": prompt})
             
             # Call API
             response = self._hf_client.chat_completion(
+                model=self.config.model,  # "Qwen/Qwen2.5-7B-Instruct"
                 messages=messages,
                 max_tokens=2048,
                 temperature=0.7
@@ -155,7 +153,6 @@ QUY TẮC BẮT BUỘC:
         except Exception as e:
             logger.error(f"HuggingFace API error: {e}")
             return f"⚠️ Lỗi HuggingFace API: {str(e)}"
-
 
 # Singleton instance
 _llm_service = None
