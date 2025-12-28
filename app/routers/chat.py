@@ -322,19 +322,37 @@ async def send_message(
                 prompt = build_greeting_prompt(request.query)
                 sources = []
                 logger.info("Detected greeting/general question - using simple prompt")
+                
+                # 3d. Gọi LLM - KHÔNG truyền chat_history, giới hạn max_tokens và temperature
+                llm_service = get_llm_service()
+                if llm_service.is_configured():
+                    response_content = await llm_service.generate_response(
+                        prompt, 
+                        chat_history=None,
+                        max_tokens=100,  # Giới hạn 100 tokens (~50 từ) cho greeting
+                        temperature=0.3  # Giảm creativity để tránh hallucination
+                    )
+                    logger.info(f"LLM response received (greeting), provider={llm_service.get_provider()}")
+                else:
+                    response_content = "⚠️ LLM chưa được cấu hình. Vui lòng thiết lập GEMINI_API_KEY hoặc HF_TOKEN trong file .env của backend."
             else:
                 # 3c. Chạy RAG pipeline đầy đủ
                 context, few_shot, sources = run_rag_pipeline(request.query)
                 # Truyền chat_history vào prompt để LLM có thể tham khảo
                 prompt = build_llm_prompt(request.query, context, few_shot, chat_history)
-            
-            # 3d. Gọi LLM
-            llm_service = get_llm_service()
-            if llm_service.is_configured():
-                response_content = await llm_service.generate_response(prompt, chat_history)
-                logger.info(f"LLM response received, provider={llm_service.get_provider()}")
-            else:
-                response_content = "⚠️ LLM chưa được cấu hình. Vui lòng thiết lập GEMINI_API_KEY hoặc HF_TOKEN trong file .env của backend."
+                
+                # 3d. Gọi LLM với chat_history và params mặc định
+                llm_service = get_llm_service()
+                if llm_service.is_configured():
+                    response_content = await llm_service.generate_response(
+                        prompt, 
+                        chat_history=chat_history,
+                        max_tokens=2048,
+                        temperature=0.7
+                    )
+                    logger.info(f"LLM response received, provider={llm_service.get_provider()}")
+                else:
+                    response_content = "⚠️ LLM chưa được cấu hình. Vui lòng thiết lập GEMINI_API_KEY hoặc HF_TOKEN trong file .env của backend."
             
             # 3e. Cache query mới nếu response hợp lệ
             if response_content and not response_content.startswith("⚠️"):

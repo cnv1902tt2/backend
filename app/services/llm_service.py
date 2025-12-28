@@ -60,22 +60,28 @@ class LLMService:
         """Lấy tên provider đang dùng"""
         return self.config.provider if self.config else None
     
-    async def generate_response(self, prompt: str, chat_history: list = None) -> str:
+    async def generate_response(self, prompt: str, chat_history: list = None, max_tokens: int = 2048, temperature: float = 0.7) -> str:
         """
         Generate response từ LLM.
         Hỗ trợ cả Gemini và HuggingFace.
+        
+        Args:
+            prompt: Prompt text
+            chat_history: Chat history (optional)
+            max_tokens: Max tokens to generate (default 2048, set lower for greetings)
+            temperature: Creativity level (default 0.7, set lower for greetings)
         """
         if not self.config:
             return "⚠️ LLM chưa được cấu hình. Vui lòng thiết lập GEMINI_API_KEY hoặc HF_TOKEN."
         
         if self.config.provider == "gemini":
-            return await self._call_gemini(prompt, chat_history)
+            return await self._call_gemini(prompt, chat_history, max_tokens, temperature)
         elif self.config.provider == "huggingface":
-            return await self._call_huggingface(prompt, chat_history)
+            return await self._call_huggingface(prompt, chat_history, max_tokens, temperature)
         else:
             return f"⚠️ Provider không được hỗ trợ: {self.config.provider}"
     
-    async def _call_gemini(self, prompt: str, chat_history: list = None) -> str:
+    async def _call_gemini(self, prompt: str, chat_history: list = None, max_tokens: int = 2048, temperature: float = 0.7) -> str:
         """Call Gemini API"""
         try:
             import google.generativeai as genai
@@ -108,7 +114,7 @@ class LLMService:
             logger.error(f"Gemini API error: {e}")
             return f"⚠️ Lỗi Gemini API: {str(e)}"
     
-    async def _call_huggingface(self, prompt: str, chat_history: list = None) -> str:
+    async def _call_huggingface(self, prompt: str, chat_history: list = None, max_tokens: int = 2048, temperature: float = 0.7) -> str:
         """Call HuggingFace Inference API"""
         try:
             from huggingface_hub import InferenceClient
@@ -120,15 +126,17 @@ class LLMService:
                     token=self.config.api_key  # Dùng token thay api_key cho rõ ràng
                 )
             
-            # Build messages (giữ nguyên phần system + history + prompt của bạn)
+            # Build messages
             messages = []
             system_msg = """Bạn là trợ lý AI hỗ trợ phát triển SimpleBIM - Revit Add-in (C#).
 
     QUY TẮC BẮT BUỘC:
     1. LUÔN trả lời bằng TIẾNG VIỆT - KHÔNG BAO GIỜ dùng tiếng Trung, tiếng Anh hoặc ngôn ngữ khác
-    2. Nếu người dùng hỏi về lịch sử chat ("tôi vừa hỏi gì", "câu hỏi trước"), trả lời: "Tôi không có khả năng nhớ lịch sử trò chuyện. Vui lòng hỏi lại câu hỏi của bạn."
-    3. KHÔNG BAO GIỜ bịa đặt hoặc tự tạo ra lịch sử chat không có thật
-    4. Trả lời ngắn gọn, hữu ích, đúng trọng tâm"""
+    2. CHỈ trả lời ĐÚNG câu hỏi được hỏi - KHÔNG tự bịa thêm câu hỏi khác
+    3. KHÔNG liệt kê "Câu hỏi 1", "Câu hỏi 2" nếu user KHÔNG hỏi nhiều câu
+    4. Nếu người dùng hỏi về lịch sử chat ("tôi vừa hỏi gì", "câu hỏi trước"), trả lời: "Tôi không có khả năng nhớ lịch sử trò chuyện. Vui lòng hỏi lại câu hỏi của bạn."
+    5. KHÔNG BAO GIỜ bịa đặt hoặc tự tạo ra lịch sử chat không có thật
+    6. Trả lời ngắn gọn, hữu ích, đúng trọng tâm"""
             messages.append({"role": "system", "content": system_msg})
             
             if chat_history:
@@ -140,12 +148,12 @@ class LLMService:
             
             messages.append({"role": "user", "content": prompt})
             
-            # Call API
+            # Call API with custom params
             response = self._hf_client.chat_completion(
                 model=self.config.model,  # "Qwen/Qwen2.5-7B-Instruct"
                 messages=messages,
-                max_tokens=2048,
-                temperature=0.7
+                max_tokens=max_tokens,
+                temperature=temperature
             )
             
             return response.choices[0].message.content

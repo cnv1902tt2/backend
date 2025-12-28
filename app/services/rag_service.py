@@ -13,6 +13,10 @@ def get_number_few_shot() -> int:
     """Lấy số lượng few-shot examples từ config"""
     return int(os.getenv("NUMBER_FEW_SHOT", "5"))
 
+def get_number_question_answer() -> int:
+    """Lấy số lượng cặp Q&A từ chat history"""
+    return int(os.getenv("NUMBER_QUESTION_ANSWER", "3"))
+
 @dataclass
 class RetrievedChunk:
     id: str
@@ -77,6 +81,30 @@ def is_greeting_or_general_question(query: str) -> bool:
         if pattern in normalized:
             return False  # Cần prompt đầy đủ với chat_history
     
+    # Các pattern FOLLOW-UP (yêu cầu giải thích thêm) - KHÔNG được coi là greeting/general
+    # Các câu hỏi này CẦN chat_history để biết đang hỏi về chủ đề gì
+    follow_up_patterns = [
+        'vẫn chưa hiểu', 'chưa hiểu rõ', 'chưa rõ', 'chưa hiểu',
+        'giải thích rõ hơn', 'giải thích thêm', 'giải thích lại',
+        'chi tiết hơn', 'cụ thể hơn', 'rõ ràng hơn', 'dễ hiểu hơn',
+        'ví dụ thêm', 'ví dụ cụ thể', 'cho ví dụ',
+        'hướng dẫn lại', 'nhắc lại', 'làm rõ'
+    ]
+    for pattern in follow_up_patterns:
+        if pattern in normalized:
+            return False  # Cần prompt đầy đủ với chat_history
+    
+    # Các pattern về WORKFLOW - KHÔNG được coi là greeting/general
+    # Các câu hỏi này cần RAG để trả lời chính xác
+    workflow_patterns = [
+        'làm gì tiếp', 'bước tiếp theo', 'tiếp theo', 'sau đó', 
+        'xong rồi', 'hoàn thành', 'đã xong', 'tiếp tục',
+        'bây giờ', 'giờ', 'sau khi', 'kế tiếp', 'lại'
+    ]
+    for pattern in workflow_patterns:
+        if pattern in normalized:
+            return False  # Cần prompt đầy đủ với RAG
+    
     # Các pattern lời chào
     greeting_patterns = [
         'xin chào', 'chào bạn', 'chào', 'hello', 'hi', 'hey',
@@ -85,7 +113,7 @@ def is_greeting_or_general_question(query: str) -> bool:
     
     # Các pattern câu hỏi chung chung
     general_patterns = [
-        'hướng dẫn tôi', 'giúp tôi', 'bạn có thể hướng dẫn',
+        'hướng dẫn tôi', 'hướng dẫn', 'giúp tôi', 'bạn có thể hướng dẫn',
         'bạn có thể giúp', 'hỗ trợ tôi', 'bạn làm được gì',
         'bạn biết gì', 'bạn có thể làm gì', 'vài vấn đề',
         '1 vài vấn đề', 'một vài vấn đề', 'một số vấn đề',
@@ -202,8 +230,8 @@ def build_chat_history_prompt(chat_history: list = None) -> str:
     if not chat_history:
         return ""
     
-    # Lấy số lượng từ config
-    count = get_number_few_shot()
+    # Lấy số lượng cặp Q&A từ config
+    count = get_number_question_answer()
     
     # Lấy các cặp Q&A gần nhất (mỗi cặp = 2 messages: user + assistant)
     recent_pairs = []
@@ -253,6 +281,25 @@ Hướng dẫn người dùng thực hiện quy trình phát triển và phát h
 4. Đóng gói ZIP và tính SHA256 hash
 5. Upload file lên GitHub Release
 6. Cập nhật version trên website admin để user tự động update
+
+=== QUY TRÌNH WORKFLOW (6 BƯỚC PHÁT HÀNH) ===
+**WORKFLOW HOÀN CHỈNH:** Tạo/sửa code → Cập nhật AssemblyVersion → Build Release → Obfuscate → ZIP → GitHub (lấy SHA256) → Website
+
+**CHI TIẾT TỪNG BƯỚC:**
+1️⃣ **Tạo/sửa code**: Tạo Command.cs + Icon + AddButton() trong Panel.cs
+2️⃣ **Cập nhật version**: Mở ForceVersion.cs → Sửa [assembly: AssemblyVersion("X.X.X.0")] + [assembly: AssemblyFileVersion("X.X.X.0")]
+3️⃣ **Build Release**: Toolbar Debug→Release → Clean Solution → Rebuild Solution
+4️⃣ **Obfuscate**: ConfuserEx → Add DLL → Settings Maximum → Protect!
+5️⃣ **Tạo ZIP**: Copy Installer + DLL vào folder → Nén thành ZIP
+6️⃣ **GitHub Release**: Upload ZIP → Click "i" để lấy SHA256 (KHÔNG cần tính trên máy)
+7️⃣ **Website**: simplebim.vercel.app/updates → Phiên bản mới → Điền link + SHA256 (xóa prefix "SHA256:")
+
+**⚠️ QUAN TRỌNG KHI XỬ LÝ CÂU HỎI "LÀM GÌ TIẾP" hoặc "BƯỚC TIẾP THEO":**
+- PHẢI đọc LỊCH SỬ TRÒ CHUYỆN để biết user đang ở bước nào
+- Nếu user vừa nói "tôi đã build xong" → Gợi ý bước 4 (Obfuscate)
+- Nếu user vừa nói "tôi đã làm rối code xong" → Gợi ý bước 5 (Tạo ZIP)
+- Nếu user vừa nói "tôi đã chỉnh sửa xong" sau khi thêm chức năng → Gợi ý bước 2 (Cập nhật version)
+- KHÔNG được bịa ra context, phải dựa vào lịch sử chat thật
 {history_section}
 === THÔNG TIN TỪ TÀI LIỆU (DÙNG ĐỂ TRẢ LỜI, KHÔNG LIỆT KÊ NGUYÊN VĂN) ===
 {context}
@@ -289,6 +336,41 @@ Vì vậy cần hướng dẫn CHI TIẾT TỪNG BƯỚC NHỎ.
 8. VỚI CÂU HỎI BÌNH THƯỜNG (không hỏi về lịch sử) → Trả lời trực tiếp, KHÔNG đề cập đến lịch sử chat
 9. KHÔNG BAO GIỜ nói "Tôi không tìm thấy câu hỏi trước đó" trừ khi người dùng HỎI VỀ CÂU HỎI TRƯỚC ĐÓ
 
+=== XỬ LÝ CÂU HỎI "LÀM GÌ TIẾP" / "BƯỚC TIẾP THEO" / "TIẾP" ===
+⚠️ BẮT BUỘC: ĐỌC LỊCH SỬ TRÒ CHUYỆN ở phần "LỊCH SỬ TRÒ CHUYỆN GẦN NHẤT" phía trên để biết user đang ở đâu!
+
+**QUY TRÌNH XỬ LÝ:**
+1. ĐỌC lịch sử chat để tìm user vừa làm gì:
+   - "đã thêm chức năng" / "đã chỉnh sửa xong" → Đang ở bước 1 (xong code)
+   - "đã build xong" / "build succeeded" → Đang ở bước 3 (xong build)
+   - "đã làm rối code" / "obfuscate xong" → Đang ở bước 4 (xong obfuscate)
+   - "đã tạo ZIP" / "đã nén xong" → Đang ở bước 5 (xong ZIP)
+   - "đã upload GitHub" / "đã publish release" → Đang ở bước 6 (xong GitHub)
+
+2. GỢI Ý bước tiếp theo cụ thể:
+   - Sau bước 1 → "Bây giờ cập nhật version trong ForceVersion.cs: Sửa [assembly: AssemblyVersion("1.3.0.0")]"
+   - Sau bước 2 → "Bây giờ build Release: Toolbar Debug→Release, Clean Solution, Rebuild Solution"
+   - Sau bước 3 → "Bây giờ làm rối code: Mở ConfuserEx.exe..."
+   - Sau bước 4 → "Bây giờ tạo ZIP: Copy Installer + DLL vào folder, nén lại"
+   - Sau bước 5 → "Bây giờ upload GitHub: Draft new release, attach ZIP, click 'i' lấy SHA256"
+   - Sau bước 6 → "Bây giờ cập nhật website: simplebim.vercel.app/updates → Phiên bản mới"
+
+3. HƯỚNG DẪN chi tiết bước đó (KHÔNG hướng dẫn tất cả 6 bước một lúc!)
+
+**VÍ DỤ ĐÚNG:**
+User: "Tôi đã thêm chức năng vào Qs xong"
+[Đọc lịch sử: User vừa hỏi về thêm chức năng Qs]
+Bot: "Tốt! Bây giờ bạn cần cập nhật version trong ForceVersion.cs:
+1. Mở ForceVersion.cs
+2. Tìm 2 dòng [assembly: AssemblyVersion("1.0.0.0")]
+3. Đổi thành version mới như "1.3.0.0"
+4. Lưu (Ctrl+S)"
+
+**VÍ DỤ SAI:**
+Bot: "Bạn cần làm 6 bước: 1. Cập nhật version... 2. Build... 3. Obfuscate..." (❌ Quá dài, user chưa hỏi)
+
+**⚠️ LƯU Ý:** Nếu KHÔNG có lịch sử chat → Hỏi lại "Bạn đã hoàn thành bước nào trong quy trình phát hành?"
+
 === CÂU HỎI CỦA NGƯỜI DÙNG ===
 {query}
 
@@ -297,22 +379,33 @@ Vì vậy cần hướng dẫn CHI TIẾT TỪNG BƯỚC NHỎ.
 
 def build_greeting_prompt(query: str) -> str:
     """Build prompt đơn giản cho lời chào hoặc câu hỏi chung chung"""
-    return f"""Bạn là trợ lý AI chuyên hướng dẫn phát triển SimpleBIM - một Revit Add-in (C#).
+    return f"""Bạn là trợ lý AI. User vừa chào hoặc hỏi chung chung.
 
-=== NHIỆM VỤ ===
-Trả lời ngắn gọn câu hỏi/lời chào của người dùng.
+⚠️ YÊU CẦU BẮT BUỘC - ĐỌC KỸ:
+1. CHỈ trả lời 1 CÂU duy nhất
+2. Nếu user CHÀO → Chào lại + hỏi cần giúp gì (TỐI ĐA 20 từ)
+3. Nếu user HỎI CHUNG CHUNG → Hỏi lại cần hỗ trợ gì cụ thể (TỐI ĐA 20 từ)
+4. TUYỆT ĐỐI KHÔNG:
+   ❌ Liệt kê "Bước 1", "Bước 2"
+   ❌ Gửi code
+   ❌ Hướng dẫn chi tiết
+   ❌ Hỏi "bạn cần làm gì tiếp"
+   ❌ Đề cập Visual Studio, C#, Commands
+   ❌ Viết quá 2 câu
 
-=== QUY TẮC BẮT BUỘC ===
-1. LUÔN trả lời bằng TIẾNG VIỆT - KHÔNG dùng tiếng Trung, tiếng Anh
-2. Nếu người dùng chào hỏi → Chào lại ngắn gọn 1-2 câu
-3. Nếu người dùng hỏi chung chung → Hỏi lại họ cần hỗ trợ gì CỤ THỂ
-4. TUYỆT ĐỐI KHÔNG liệt kê nhiều ví dụ
-5. Chỉ trả lời TỐI ĐA 3 câu
+✅ ĐÚNG:
+User: "xin chào"
+Bot: "Xin chào! Bạn cần hỗ trợ gì về SimpleBIM?"
 
-=== CÂU HỎI ===
-{query}
+User: "giúp tôi"
+Bot: "Bạn cần hỗ trợ vấn đề gì cụ thể về SimpleBIM?"
 
-=== TRẢ LỜI NGẮN GỌN ==="""
+❌ SAI (quá dài):
+"Chào bạn! Tôi hiểu bạn đang muốn bắt đầu... Bước 1: Tạo hoặc chỉnh sửa..."
+
+User: {query}
+
+TRẢ LỜI (CHỈ 1 CÂU NGẮN):"""
 
 
 def run_rag_pipeline(query: str) -> Tuple[str, str, List[str]]:
