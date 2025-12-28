@@ -70,7 +70,11 @@ def is_greeting_or_general_question(query: str) -> bool:
     """Kiểm tra xem query có phải là lời chào hoặc câu hỏi chung chung không"""
     normalized = normalize_query(query)
     
-    # Các pattern liên quan đến LỊCH SỬ CHAT - KHÔNG được coi là greeting/general
+    # ===================================================================
+    # ✅ BƯỚC 1: KIỂM TRA CÁC PATTERN CẦN CONTEXT - ƯU TIÊN CAO NHẤT
+    # ===================================================================
+    
+    # Pattern 1.1: LỊCH SỬ CHAT - KHÔNG được coi là greeting/general
     # Các câu hỏi này CẦN chat_history nên phải dùng prompt đầy đủ
     history_patterns = [
         'vừa hỏi', 'trước đó', 'câu hỏi trước', 'lúc nãy',
@@ -79,68 +83,72 @@ def is_greeting_or_general_question(query: str) -> bool:
     ]
     for pattern in history_patterns:
         if pattern in normalized:
-            return False  # Cần prompt đầy đủ với chat_history
+            return False  # ⚠️ Cần prompt đầy đủ với chat_history
     
-    # Các pattern FOLLOW-UP (yêu cầu giải thích thêm) - KHÔNG được coi là greeting/general
+    # Pattern 1.2: FOLLOW-UP (yêu cầu giải thích thêm) - KHÔNG được coi là greeting/general
     # Các câu hỏi này CẦN chat_history để biết đang hỏi về chủ đề gì
     follow_up_patterns = [
         'vẫn chưa hiểu', 'chưa hiểu rõ', 'chưa rõ', 'chưa hiểu',
         'giải thích rõ hơn', 'giải thích thêm', 'giải thích lại',
         'chi tiết hơn', 'cụ thể hơn', 'rõ ràng hơn', 'dễ hiểu hơn',
         'ví dụ thêm', 'ví dụ cụ thể', 'cho ví dụ',
-        'hướng dẫn lại', 'nhắc lại', 'làm rõ'
+        'hướng dẫn lại', 'làm rõ'
     ]
     for pattern in follow_up_patterns:
         if pattern in normalized:
-            return False  # Cần prompt đầy đủ với chat_history
+            return False  # ⚠️ Cần prompt đầy đủ với chat_history
     
-    # Các pattern về WORKFLOW - KHÔNG được coi là greeting/general
-    # Các câu hỏi này cần RAG để trả lời chính xác
+    # Pattern 1.3: WORKFLOW/TIẾP TỤC - KHÔNG được coi là greeting/general
+    # Các câu hỏi này CẦN RAG + chat_history để trả lời chính xác
     workflow_patterns = [
         'làm gì tiếp', 'bước tiếp theo', 'tiếp theo', 'sau đó', 
         'xong rồi', 'hoàn thành', 'đã xong', 'tiếp tục',
-        'bây giờ', 'giờ', 'sau khi', 'kế tiếp', 'lại'
+        'bây giờ', 'giờ', 'sau khi', 'kế tiếp', 'lại',
+        'các bước', 'quy trình', 'từ bước'
     ]
     for pattern in workflow_patterns:
         if pattern in normalized:
-            return False  # Cần prompt đầy đủ với RAG
+            return False  # ⚠️ Cần prompt đầy đủ với RAG + chat_history
     
-    # Các pattern lời chào
+    # Pattern 1.4: CÓ TỪ KHÓA CỤ THỂ - KHÔNG được coi là greeting/general
+    specific_keywords = [
+        'command', 'build', 'version', 'ribbon', 'icon', 'obfuscate',
+        'sha256', 'hash', 'zip', 'github', 'release', 'update',
+        'button', 'panel', 'tab', 'dll', 'confuserex', 'visual studio',
+        'code', 'lỗi', 'error', 'tạo', 'thêm', 'xóa', 'sửa',
+        'qs', 'as', 'mepf', 'chức năng', 'phiên bản', 'cập nhật',
+        'file', 'namespace', 'class', 'copy', 'paste', 'sửa đổi'
+    ]
+    if any(kw in normalized for kw in specific_keywords):
+        return False  # ⚠️ Có từ khóa cụ thể → Cần RAG
+    
+    # ===================================================================
+    # ✅ BƯỚC 2: SAU KHI LOẠI TRỪ HẾT - MỚI KIỂM TRA GREETING
+    # ===================================================================
+    
+    # Pattern 2.1: Lời chào đơn thuần
     greeting_patterns = [
         'xin chào', 'chào bạn', 'chào', 'hello', 'hi', 'hey',
         'chào buổi sáng', 'chào buổi chiều', 'chào buổi tối'
     ]
-    
-    # Các pattern câu hỏi chung chung
-    general_patterns = [
-        'hướng dẫn tôi', 'hướng dẫn', 'giúp tôi', 'bạn có thể hướng dẫn',
-        'bạn có thể giúp', 'hỗ trợ tôi', 'bạn làm được gì',
-        'bạn biết gì', 'bạn có thể làm gì', 'vài vấn đề',
-        '1 vài vấn đề', 'một vài vấn đề', 'một số vấn đề',
-        'được không', 'có thể không', 'giúp được không'
-    ]
-    
-    # Kiểm tra lời chào
     for pattern in greeting_patterns:
-        if pattern in normalized or normalized == pattern:
-            return True
+        if pattern == normalized or (len(normalized.split()) <= 3 and pattern in normalized):
+            return True  # ✅ Đây là lời chào thuần túy
     
-    # Kiểm tra câu hỏi chung chung (không có chủ đề cụ thể)
-    for pattern in general_patterns:
-        if pattern in normalized:
-            # Kiểm tra xem có từ khóa cụ thể không
-            specific_keywords = [
-                'command', 'build', 'version', 'ribbon', 'icon', 'obfuscate',
-                'sha256', 'hash', 'zip', 'github', 'release', 'update',
-                'button', 'panel', 'tab', 'dll', 'confuserex', 'visual studio',
-                'code', 'lỗi', 'error', 'tạo', 'thêm', 'xóa', 'sửa',
-                'qs', 'as', 'mepf', 'chức năng'
-            ]
-            has_specific = any(kw in normalized for kw in specific_keywords)
-            if not has_specific:
-                return True
+    # Pattern 2.2: Câu hỏi chung chung (KHÔNG có context/từ khóa cụ thể)
+    # CHỈ coi là general nếu câu KHÔNG chứa bất kỳ pattern ở Bước 1
+    general_only_patterns = [
+        'bạn làm được gì', 'bạn biết gì', 'bạn có thể làm gì',
+        'hỗ trợ tôi', 'giúp được không', 'có thể không'
+    ]
+    for pattern in general_only_patterns:
+        if pattern in normalized and len(normalized.split()) <= 8:
+            return True  # ✅ Câu hỏi chung chung ngắn
     
-    return False
+    # ===================================================================
+    # ✅ BƯỚC 3: MẶC ĐỊNH - CẦN RAG
+    # ===================================================================
+    return False  # Mọi câu hỏi khác đều cần RAG để trả lời
 
 
 def calculate_similarity(query1: str, query2: str) -> float:
