@@ -1,4 +1,4 @@
-# LLM Service - Hỗ trợ Gemini và HuggingFace
+# LLM Service - Hỗ trợ Gemini, Groq và HuggingFace
 # Author: SimpleBIM Team
 
 import os
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class LLMConfig:
     """LLM Configuration"""
-    provider: str  # "gemini" or "huggingface"
+    provider: str  # "gemini", "groq", or "huggingface"
     api_key: str
     model: str
 
@@ -24,6 +24,7 @@ class LLMService:
     def __init__(self):
         self.config = self._detect_config()
         self._gemini_model = None
+        self._groq_client = None
         self._hf_client = None
     
     def _detect_config(self) -> Optional[LLMConfig]:
@@ -36,7 +37,17 @@ class LLMService:
             return LLMConfig(
                 provider="gemini",
                 api_key=gemini_key,
-                model="gemini-2.0-flash"
+                model="gemini-2.5-flash"
+            )
+        
+        # Try Groq
+        groq_key = os.environ.get("GROQ_API_KEY")
+        if groq_key:
+            logger.info("Detected Groq API key")
+            return LLMConfig(
+                provider="groq",
+                api_key=groq_key,
+                model="llama-3.3-70b-versatile"  # Llama 3.3 70B
             )
         
         # Try HuggingFace
@@ -63,7 +74,7 @@ class LLMService:
     async def generate_response(self, prompt: str, chat_history: list = None, max_tokens: int = 2048, temperature: float = 0.7) -> str:
         """
         Generate response từ LLM.
-        Hỗ trợ cả Gemini và HuggingFace.
+        Hỗ trợ cả Gemini, Groq và HuggingFace.
         
         Args:
             prompt: Prompt text
@@ -72,10 +83,12 @@ class LLMService:
             temperature: Creativity level (default 0.7, set lower for greetings)
         """
         if not self.config:
-            return "⚠️ LLM chưa được cấu hình. Vui lòng thiết lập GEMINI_API_KEY hoặc HF_TOKEN."
+            return "⚠️ LLM chưa được cấu hình. Vui lòng thiết lập GEMINI_API_KEY, GROQ_API_KEY hoặc HF_TOKEN."
         
         if self.config.provider == "gemini":
             return await self._call_gemini(prompt, chat_history, max_tokens, temperature)
+        elif self.config.provider == "groq":
+            return await self._call_groq(prompt, chat_history, max_tokens, temperature)
         elif self.config.provider == "huggingface":
             return await self._call_huggingface(prompt, chat_history, max_tokens, temperature)
         else:
@@ -114,16 +127,14 @@ class LLMService:
             logger.error(f"Gemini API error: {e}")
             return f"⚠️ Lỗi Gemini API: {str(e)}"
     
-    async def _call_huggingface(self, prompt: str, chat_history: list = None, max_tokens: int = 2048, temperature: float = 0.7) -> str:
-        """Call HuggingFace Inference API"""
+    async def _call_groq(self, prompt: str, chat_history: list = None, max_tokens: int = 2048, temperature: float = 0.7) -> str:
+        """Call Groq API"""
         try:
-            from huggingface_hub import InferenceClient
+            from groq import Groq
             
-            if self._hf_client is None:
-                # Thay đổi: dùng provider="together" (hoặc "auto" để tự chọn nếu có nhiều)
-                self._hf_client = InferenceClient(
-                    provider="together",  # Hoặc "auto" nếu bạn muốn router tự chọn provider tốt nhất
-                    token=self.config.api_key  # Dùng token thay api_key cho rõ ràng
+            if self._groq_client is None:
+                self._groq_client = Groq(
+                    api_key=self.config.api_key
                 )
             
             # Build messages
@@ -148,9 +159,56 @@ class LLMService:
             
             messages.append({"role": "user", "content": prompt})
             
-            # Call API with custom params
+            # Call Groq API
+            response = self._groq_client.chat.completions.create(
+                model=self.config.model,  # "llama-3.3-70b-versatile"
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            
+            return response.choices[0].message.content
+            
+        except Exception as e:
+            logger.error(f"Groq API error: {e}")
+            return f"⚠️ Lỗi Groq API: {str(e)}"
+    
+    async def _call_huggingface(self, prompt: str, chat_history: list = None, max_tokens: int = 2048, temperature: float = 0.7) -> str:
+        """Call HuggingFace Inference API"""
+        try:
+            from huggingface_hub import InferenceClient
+            
+            if self._hf_client is None:
+                self._hf_client = InferenceClient(
+                    provider="together",
+                    token=self.config.api_key
+                )
+            
+            # Build messages
+            messages = []
+            system_msg = """Bạn là trợ lý AI hỗ trợ phát triển SimpleBIM - Revit Add-in (C#).
+
+    QUY TẮC BẮT BUỘC:
+    1. LUÔN trả lời bằng TIẾNG VIỆT - KHÔNG BAO GIỜ dùng tiếng Trung, tiếng Anh hoặc ngôn ngữ khác
+    2. CHỈ trả lời ĐÚNG câu hỏi được hỏi - KHÔNG tự bịa thêm câu hỏi khác
+    3. KHÔNG liệt kê "Câu hỏi 1", "Câu hỏi 2" nếu user KHÔNG hỏi nhiều câu
+    4. Nếu người dùng hỏi về lịch sử chat ("tôi vừa hỏi gì", "câu hỏi trước"), trả lời: "Tôi không có khả năng nhớ lịch sử trò chuyện. Vui lòng hỏi lại câu hỏi của bạn."
+    5. KHÔNG BAO GIỜ bịa đặt hoặc tự tạo ra lịch sử chat không có thật
+    6. Trả lời ngắn gọn, hữu ích, đúng trọng tâm"""
+            messages.append({"role": "system", "content": system_msg})
+            
+            if chat_history:
+                for msg in chat_history[-6:]:
+                    messages.append({
+                        "role": msg.get("role", "user"),
+                        "content": msg.get("content", "")
+                    })
+            
+            messages.append({"role": "user", "content": prompt})
+            
+            # Call HuggingFace API
             response = self._hf_client.chat_completion(
-                model=self.config.model,  # "Qwen/Qwen2.5-7B-Instruct"
+                model=self.config.model,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature
