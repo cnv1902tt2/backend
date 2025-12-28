@@ -14,8 +14,8 @@ def get_number_few_shot() -> int:
     return int(os.getenv("NUMBER_FEW_SHOT", "5"))
 
 def get_number_question_answer() -> int:
-    """Lấy số lượng cặp Q&A từ chat history"""
-    return int(os.getenv("NUMBER_QUESTION_ANSWER", "3"))
+    """Lấy số lượng cặp Q&A từ chat history - tăng lên 5 để có đủ context"""
+    return int(os.getenv("NUMBER_QUESTION_ANSWER", "5"))
 
 @dataclass
 class RetrievedChunk:
@@ -69,6 +69,21 @@ def normalize_query(query: str) -> str:
 def is_greeting_or_general_question(query: str) -> bool:
     """Kiểm tra xem query có phải là lời chào hoặc câu hỏi chung chung không"""
     normalized = normalize_query(query)
+    
+    # ===================================================================
+    # ✅ BƯỚC 0: XÁC NHẬN/TIẾP TỤC - LUÔN CẦN CONTEXT
+    # ===================================================================
+    # Các câu xác nhận ngắn như "đúng vậy", "ok", "yes" CẦN lịch sử chat
+    confirmation_patterns = [
+        'đúng vậy', 'đúng rồi', 'đúng', 'vâng', 'ok', 'okay', 'yes', 'có',
+        'được', 'ừ', 'uh', 'uhm', 'chính xác', 'chuẩn', 'phải',
+        'tôi hiểu', 'tôi biết', 'rồi', 'xong', 'done', 'tiếp'
+    ]
+    # Kiểm tra câu ngắn (dưới 5 từ) có pattern xác nhận
+    if len(normalized.split()) <= 5:
+        for pattern in confirmation_patterns:
+            if pattern == normalized or normalized.startswith(pattern):
+                return False  # ⚠️ Cần prompt đầy đủ với chat_history
     
     # ===================================================================
     # ✅ BƯỚC 1: KIỂM TRA CÁC PATTERN CẦN CONTEXT - ƯU TIÊN CAO NHẤT
@@ -288,7 +303,11 @@ def build_chat_history_prompt(chat_history: list = None) -> str:
     
     history_parts = []
     for i, pair in enumerate(recent_pairs, 1):
-        history_parts.append(f"[{i}] Người dùng: {pair['question']}\n    Trợ lý: {pair['answer'][:200]}...")
+        # Giữ nhiều context hơn (500 ký tự) để LLM hiểu rõ bước đang làm
+        answer_preview = pair['answer'][:500]
+        if len(pair['answer']) > 500:
+            answer_preview += "..."
+        history_parts.append(f"[{i}] Người dùng: {pair['question']}\n    Trợ lý: {answer_preview}")
     
     return "\n".join(history_parts)
 
@@ -296,14 +315,16 @@ def build_chat_history_prompt(chat_history: list = None) -> str:
 def build_llm_prompt(query: str, context: str, few_shot: str, chat_history: list = None) -> str:
     """Build prompt tối ưu cho LLM - cho phép tổng hợp thông tin từ nhiều chunks"""
     
-    # Build phần lịch sử chat
+    # Build phần lịch sử chat - QUAN TRỌNG để hiểu ngữ cảnh
     history_section = ""
     if chat_history:
         history_text = build_chat_history_prompt(chat_history)
         if history_text:
             history_section = f"""
-=== LỊCH SỬ TRÒ CHUYỆN GẦN NHẤT ===
+=== LỊCH SỬ TRÒ CHUYỆN GẦN NHẤT (ĐỌC KỸ!) ===
 {history_text}
+
+⚠️ QUAN TRỌNG: Dựa vào lịch sử trên, bạn PHẢI hiểu user đang ở bước nào trong quy trình và TIẾP TỤC hướng dẫn từ đó!
 """
     
     return f"""Bạn là trợ lý AI chuyên hướng dẫn phát triển SimpleBIM - Revit Add-in (C#) trong Visual Studio 2022.
@@ -366,6 +387,19 @@ Dưới đây là các phần liên quan từ tài liệu. Bạn CÓ THỂ KẾT
    - KHÔNG copy nguyên văn từ ví dụ few-shot
    - Với câu hỏi "làm gì tiếp" → ĐỌC lịch sử để biết user đang ở bước nào, gợi ý bước kế
 
+5. **⛔ TUYỆT ĐỐI KHÔNG ĐƯỢC:**
+   - KHÔNG hỏi lại "Bạn cần hỗ trợ gì?" khi user đã nói rõ yêu cầu
+   - KHÔNG hỏi "Bạn đang ở bước nào?" - TỰ ĐỌC lịch sử để xác định
+   - KHÔNG yêu cầu xác nhận như "Đúng vậy không?", "Bạn muốn tiếp tục chứ?"
+   - KHÔNG lặp lại nội dung đã trả lời trước đó
+   - Khi user nói "tiếp tục", "đã xong", "tôi đã build" → ĐỌC lịch sử và HƯỚNG DẪN BƯỚC KẾ TIẾP ngay lập tức
+
+6. **XỬ LÝ CÂU HỎI FOLLOW-UP:**
+   - User: "tiếp tục" → Xem lịch sử, hướng dẫn bước kế
+   - User: "tôi đã build xong" → Hướng dẫn bước sau build (obfuscate/tạo ZIP)
+   - User: "đúng vậy" → Tiếp tục hướng dẫn chi tiết, KHÔNG hỏi lại
+   - User: "hướng dẫn các bước tiếp theo" → Xem lịch sử, liệt kê các bước còn lại
+
 === CÂU HỎI ===
 {query}
 
@@ -374,17 +408,18 @@ Dưới đây là các phần liên quan từ tài liệu. Bạn CÓ THỂ KẾT
 
 def build_greeting_prompt(query: str) -> str:
     """Build prompt CỰC KỲ NGẮN GỌN cho lời chào - CHỈ 1 CÂU"""
-    return f"""Bạn là trợ lý SimpleBIM. User vừa chào hoặc hỏi chung chung.
+    return f"""Bạn là trợ lý SimpleBIM. User vừa chào.
 
 ⚠️ QUY TẮC BẮT BUỘC:
 - CHỈ trả lời 1 CÂU duy nhất (10-15 từ)
 - KHÔNG liệt kê bước 1, 2, 3
 - KHÔNG hướng dẫn chi tiết
 - KHÔNG đề cập Visual Studio, Commands, code
+- KHÔNG hỏi "Bạn đang ở bước nào?"
 
 ✅ MẪU ĐÚNG:
 "Xin chào! Bạn cần hỗ trợ gì về SimpleBIM?"
-"Bạn cần hỗ trợ vấn đề cụ thể nào về SimpleBIM?"
+"Chào bạn! Tôi sẵn sàng hỗ trợ về SimpleBIM."
 
 User: {query}
 
