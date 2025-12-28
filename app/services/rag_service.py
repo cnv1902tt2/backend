@@ -157,15 +157,32 @@ def calculate_similarity(query1: str, query2: str) -> float:
     return len(intersection) / len(union)
 
 
-def retrieve_chunks(query: str, top_k: int = 5) -> List[RetrievedChunk]:
+def retrieve_chunks(query: str, top_k: int = 8) -> List[RetrievedChunk]:
     """
     Retrieve relevant chunks cho query.
-    Sử dụng keyword matching đơn giản.
+    Sử dụng keyword matching với fuzzy support.
+    Tăng top_k lên 8 để cung cấp nhiều context hơn cho LLM tổng hợp.
     """
     query_normalized = normalize_query(query)
     query_words = set(query_normalized.split())
     
     scored_chunks = []
+    
+    # Mapping từ đồng nghĩa để cải thiện retrieval
+    synonym_mapping = {
+        'chuyển': ['di chuyển', 'move', 'dời'],
+        'tạo': ['thêm', 'add', 'new', 'create'],
+        'xóa': ['delete', 'remove', 'bỏ'],
+        'sửa': ['chỉnh sửa', 'edit', 'modify', 'đổi'],
+        'chức năng': ['function', 'feature', 'command', 'button'],
+        'tab': ['ribbon', 'panel', 'giao diện'],
+    }
+    
+    # Mở rộng query với từ đồng nghĩa
+    expanded_query_words = set(query_words)
+    for word in query_words:
+        if word in synonym_mapping:
+            expanded_query_words.update(synonym_mapping[word])
     
     for chunk in RAG_CHUNKS:
         # Tính score dựa trên keyword overlap
@@ -173,20 +190,26 @@ def retrieve_chunks(query: str, top_k: int = 5) -> List[RetrievedChunk]:
         keywords = set(chunk.get('keywords', []))
         
         # Score từ keywords - tăng trọng số cho exact match
-        keyword_matches = query_words & keywords
+        keyword_matches = expanded_query_words & keywords
         keyword_score = len(keyword_matches) / max(len(keywords), 1)
         
         # Bonus score nếu match nhiều keywords quan trọng
-        important_keywords = {'qs', 'as', 'mepf', 'chức năng', 'tab', 'ribbon', 'command'}
-        important_matches = query_words & important_keywords & keywords
-        bonus_score = len(important_matches) * 0.2
+        important_keywords = {'qs', 'as', 'mepf', 'chức năng', 'tab', 'ribbon', 'command', 'tạo', 'chuyển'}
+        important_matches = expanded_query_words & important_keywords & keywords
+        bonus_score = len(important_matches) * 0.25
         
-        # Score từ content overlap
+        # Score từ content overlap (bao gồm cả expanded words)
         content_words = set(chunk_text.split())
-        content_score = len(query_words & content_words) / max(len(query_words), 1)
+        content_score = len(expanded_query_words & content_words) / max(len(expanded_query_words), 1)
+        
+        # Bonus cho category liên quan
+        category_bonus = 0.0
+        if any(cat in query_normalized for cat in ['workflow', 'quy trình', 'hoàn chỉnh', 'đầy đủ']):
+            if chunk['category'] in ['workflow', 'overview']:
+                category_bonus = 0.3
         
         # Combined score
-        total_score = keyword_score * 0.5 + content_score * 0.3 + bonus_score
+        total_score = keyword_score * 0.5 + content_score * 0.3 + bonus_score + category_bonus
         
         if total_score > 0.1:
             scored_chunks.append(RetrievedChunk(
@@ -203,13 +226,17 @@ def retrieve_chunks(query: str, top_k: int = 5) -> List[RetrievedChunk]:
 
 
 def build_context(chunks: List[RetrievedChunk]) -> str:
-    """Build context string từ chunks"""
+    """Build context string từ chunks với metadata để LLM dễ tổng hợp"""
     if not chunks:
         return "Không tìm thấy thông tin trực tiếp liên quan trong tài liệu."
     
     context_parts = []
     for i, chunk in enumerate(chunks, 1):
-        context_parts.append(f"[{i}] **{chunk.title}** (relevance: {int(chunk.score * 100)}%)\n{chunk.content}")
+        # Thêm category để LLM biết chunk thuộc nhóm nào
+        context_parts.append(
+            f"[{i}] **{chunk.title}** (Category: {chunk.category}, Relevance: {int(chunk.score * 100)}%)\n"
+            f"{chunk.content}"
+        )
     
     return "\n\n---\n\n".join(context_parts)
 
@@ -259,7 +286,7 @@ def build_chat_history_prompt(chat_history: list = None) -> str:
 
 
 def build_llm_prompt(query: str, context: str, few_shot: str, chat_history: list = None) -> str:
-    """Build full prompt cho LLM"""
+    """Build prompt tối ưu cho LLM - cho phép tổng hợp thông tin từ nhiều chunks"""
     
     # Build phần lịch sử chat
     history_section = ""
@@ -267,145 +294,93 @@ def build_llm_prompt(query: str, context: str, few_shot: str, chat_history: list
         history_text = build_chat_history_prompt(chat_history)
         if history_text:
             history_section = f"""
-=== LỊCH SỬ TRÒ CHUYỆN GẦN NHẤT (THAM KHẢO ĐỂ TRẢ LỜI PHÙ HỢP NGỮ CẢNH) ===
+=== LỊCH SỬ TRÒ CHUYỆN GẦN NHẤT ===
 {history_text}
 """
     
-    return f"""Bạn là trợ lý AI chuyên hướng dẫn phát triển SimpleBIM - một Revit Add-in (C#).
+    return f"""Bạn là trợ lý AI chuyên hướng dẫn phát triển SimpleBIM - Revit Add-in (C#) trong Visual Studio 2022.
 
-=== VAI TRÒ CỦA BẠN ===
-Hướng dẫn người dùng thực hiện quy trình phát triển và phát hành SimpleBIM:
-1. Tạo và chỉnh sửa mã nguồn C# trong Visual Studio 2022 (KHÔNG phải VS Code)
-2. Build project ở chế độ Release
-3. Làm rối code (obfuscate) bằng ConfuserEx
-4. Đóng gói ZIP và tính SHA256 hash
-5. Upload file lên GitHub Release
-6. Cập nhật version trên website admin để user tự động update
+=== CẤU TRÚC DỰ ÁN SIMPLEBIM ===
+SimpleBIM/
+├── Commands/           # Mã nguồn chức năng
+│   ├── As/            # Ribbon SIMPLEBIM.AS (Kiến trúc)
+│   ├── MEPF/          # Ribbon SIMPLEBIM.MEPF (Cơ điện)
+│   └── Qs/            # Ribbon SIMPLEBIM.QS (Định lượng)
+├── Ribbon/Panels/     # Cấu hình giao diện ribbon
+│   ├── AsPanel.cs
+│   ├── MEPFPanel.cs
+│   └── QsPanel.cs
+├── Icons/16/ và 32/   # Icon cho buttons
+└── Update/ForceVersion.cs  # Quản lý version
 
-=== QUY TRÌNH WORKFLOW (6 BƯỚC PHÁT HÀNH) ===
-**WORKFLOW HOÀN CHỈNH:** Tạo/sửa code → Cập nhật AssemblyVersion → Build Release → Obfuscate → ZIP → GitHub (lấy SHA256) → Website
-
-**CHI TIẾT TỪNG BƯỚC:**
-1️⃣ **Tạo/sửa code**: Tạo Command.cs + Icon + AddButton() trong Panel.cs
-2️⃣ **Cập nhật version**: Mở ForceVersion.cs → Sửa [assembly: AssemblyVersion("X.X.X.0")] + [assembly: AssemblyFileVersion("X.X.X.0")]
-3️⃣ **Build Release**: Toolbar Debug→Release → Clean Solution → Rebuild Solution
-4️⃣ **Obfuscate**: ConfuserEx → Add DLL → Settings Maximum → Protect!
-5️⃣ **Tạo ZIP**: Copy Installer + DLL vào folder → Nén thành ZIP
-6️⃣ **GitHub Release**: Upload ZIP → Click "i" để lấy SHA256 (KHÔNG cần tính trên máy)
-7️⃣ **Website**: simplebim.vercel.app/updates → Phiên bản mới → Điền link + SHA256 (xóa prefix "SHA256:")
-
-**⚠️ QUAN TRỌNG KHI XỬ LÝ CÂU HỎI "LÀM GÌ TIẾP" hoặc "BƯỚC TIẾP THEO":**
-- PHẢI đọc LỊCH SỬ TRÒ CHUYỆN để biết user đang ở bước nào
-- Nếu user vừa nói "tôi đã build xong" → Gợi ý bước 4 (Obfuscate)
-- Nếu user vừa nói "tôi đã làm rối code xong" → Gợi ý bước 5 (Tạo ZIP)
-- Nếu user vừa nói "tôi đã chỉnh sửa xong" sau khi thêm chức năng → Gợi ý bước 2 (Cập nhật version)
-- KHÔNG được bịa ra context, phải dựa vào lịch sử chat thật
+=== WORKFLOW PHÁT HÀNH (6 BƯỚC) ===
+1. Tạo/sửa code → 2. Cập nhật version → 3. Build Release → 4. Obfuscate → 5. Tạo ZIP → 6. GitHub Release → 7. Website
 {history_section}
-=== THÔNG TIN TỪ TÀI LIỆU (DÙNG ĐỂ TRẢ LỜI, KHÔNG LIỆT KÊ NGUYÊN VĂN) ===
+=== TÀI LIỆU HƯỚNG DẪN ===
+Dưới đây là các phần liên quan từ tài liệu. Bạn CÓ THỂ KẾT HỢP NHIỀU PHẦN để trả lời câu hỏi.
+
 {context}
 
-=== VÍ DỤ VỀ CÁCH TRẢ LỜI (CHỈ THAM KHẢO PHONG CÁCH, KHÔNG COPY) ===
+=== VÍ DỤ PHONG CÁCH TRẢ LỜI ===
 {few_shot}
 
-=== ĐỐI TƯỢNG NGƯỜI DÙNG ===
-Người dùng là người MỚI, CHƯA THÀNH THẠO Visual Studio và KHÔNG BIẾT CODE.
-Vì vậy cần hướng dẫn CHI TIẾT TỪNG BƯỚC NHỎ.
+=== HƯỚNG DẪN TRẢ LỜI ===
 
-=== QUY TẮC PHÂN BIỆT QUAN TRỌNG ===
-1. "Tạo chức năng mới trong giao diện Qs/As/MEPF" = Thêm Command + Button vào tab HIỆN CÓ
-   → Hướng dẫn: Tạo file trong Commands/Qs (hoặc As, MEPF) + Thêm AddButton vào QsPanel.cs
-   
-2. "Tạo tab ribbon mới" hoặc "tạo giao diện mới hoàn toàn" = Tạo TAB MỚI (như BS)
-   → Hướng dẫn: Copy QsPanel → BsPanel, đăng ký trong RibbonManager
+**KHI CÓ THÔNG TIN TRỰC TIẾP:**
+- Sử dụng thông tin từ tài liệu ở trên
+- Trả lời chi tiết, từng bước nhỏ cho người mới
 
-=== QUY TẮC TRẢ LỜI ===
-1. QUAN TRỌNG: Khi hỏi về C#, Visual Studio → LUÔN trả lời dựa trên Visual Studio 2022
-2. ƯU TIÊN trả lời dựa trên thông tin trong tài liệu ở trên
-3. Trả lời bằng tiếng Việt, CHI TIẾT, dễ hiểu cho người mới
-4. Dùng bullet points và đánh số thứ tự rõ ràng
-5. Chỉ rõ: CÁI GÌ cần làm, Ở ĐÂU, COPY/PASTE cái gì, ĐỔI từ gì THÀNH gì
+**KHI CẦN TỔNG HỢP (câu hỏi phức tạp hoặc không match trực tiếp):**
+- KẾT HỢP nhiều phần tài liệu liên quan để tạo hướng dẫn hoàn chỉnh
+- SỬ DỤNG CẤU TRÚC DỰ ÁN để suy luận các bước tương tự
+- Ví dụ: "chuyển chức năng từ As sang Qs" = copy file từ Commands/As sang Commands/Qs + sửa namespace + cập nhật QsPanel.cs
 
-=== QUY TẮC BẮT BUỘC ===
-1. LUÔN trả lời bằng TIẾNG VIỆT - KHÔNG BAO GIỜ dùng tiếng Trung, tiếng Anh
-2. CHỈ trả lời ĐÚNG câu hỏi được hỏi - KHÔNG thêm thông tin thừa
-3. KHÔNG gửi code nếu người dùng không yêu cầu cụ thể
-4. TUYỆT ĐỐI KHÔNG liệt kê nhiều "Ví dụ 1", "Ví dụ 2"
-5. TUYỆT ĐỐI KHÔNG copy nguyên văn từ phần ví dụ
-6. Mỗi câu trả lời chỉ tập trung vào 1 chủ đề
-7. CHỈ KHI người dùng hỏi rõ ràng về lịch sử chat (VD: "tôi vừa hỏi gì", "câu hỏi trước của tôi") → Tham khảo LỊCH SỬ TRÒ CHUYỆN để trả lời
-8. VỚI CÂU HỎI BÌNH THƯỜNG (không hỏi về lịch sử) → Trả lời trực tiếp, KHÔNG đề cập đến lịch sử chat
-9. KHÔNG BAO GIỜ nói "Tôi không tìm thấy câu hỏi trước đó" trừ khi người dùng HỎI VỀ CÂU HỎI TRƯỚC ĐÓ
+**⚠️ QUY TẮC TUÂN THỦ NGHIÊM NGẶT - BẮT BUỘC:**
 
-=== XỬ LÝ CÂU HỎI "LÀM GÌ TIẾP" / "BƯỚC TIẾP THEO" / "TIẾP" ===
-⚠️ BẮT BUỘC: ĐỌC LỊCH SỬ TRÒ CHUYỆN ở phần "LỊCH SỬ TRÒ CHUYỆN GẦN NHẤT" phía trên để biết user đang ở đâu!
+1. **GIỮ NGUYÊN TÊN FILE/CLASS:**
+   - User nói "facefloor" → Giữ nguyên "facefloor" (KHÔNG tự động thêm "Command")
+   - User nói "FaceFloorCommand" → Giữ nguyên "FaceFloorCommand"
+   - CHỈ thêm "Command" khi tài liệu hoặc user yêu cầu rõ ràng
 
-**QUY TRÌNH XỬ LÝ:**
-1. ĐỌC lịch sử chat để tìm user vừa làm gì:
-   - "đã thêm chức năng" / "đã chỉnh sửa xong" → Đang ở bước 1 (xong code)
-   - "đã build xong" / "build succeeded" → Đang ở bước 3 (xong build)
-   - "đã làm rối code" / "obfuscate xong" → Đang ở bước 4 (xong obfuscate)
-   - "đã tạo ZIP" / "đã nén xong" → Đang ở bước 5 (xong ZIP)
-   - "đã upload GitHub" / "đã publish release" → Đang ở bước 6 (xong GitHub)
+2. **COPY CHÍNH XÁC CODE TỪ TÀI LIỆU:**
+   - Tài liệu viết `[assembly: AssemblyVersion("1.0.0.0")]` → Copy CHÍNH XÁC
+   - KHÔNG được tự sáng tạo thành `new Version("1.0.0.0")`
+   - KHÔNG được thay đổi format, cú pháp, tên biến
 
-2. GỢI Ý bước tiếp theo cụ thể:
-   - Sau bước 1 → "Bây giờ cập nhật version trong ForceVersion.cs: Sửa [assembly: AssemblyVersion("1.3.0.0")]"
-   - Sau bước 2 → "Bây giờ build Release: Toolbar Debug→Release, Clean Solution, Rebuild Solution"
-   - Sau bước 3 → "Bây giờ làm rối code: Mở ConfuserEx.exe..."
-   - Sau bước 4 → "Bây giờ tạo ZIP: Copy Installer + DLL vào folder, nén lại"
-   - Sau bước 5 → "Bây giờ upload GitHub: Draft new release, attach ZIP, click 'i' lấy SHA256"
-   - Sau bước 6 → "Bây giờ cập nhật website: simplebim.vercel.app/updates → Phiên bản mới"
+3. **TUÂN THỦ SỐ LIỆU:**
+   - Tài liệu viết version "1.0.0.0" → Giữ nguyên "1.0.0.0"
+   - Chỉ thay đổi khi user yêu cầu version cụ thể
 
-3. HƯỚNG DẪN chi tiết bước đó (KHÔNG hướng dẫn tất cả 6 bước một lúc!)
+4. **QUY TẮC CHUNG:**
+   - Trả lời TIẾNG VIỆT, chi tiết, dễ hiểu
+   - Chỉ rõ: CÁI GÌ, Ở ĐÂU, COPY/PASTE gì, ĐỔI từ gì THÀNH gì
+   - Dùng số thứ tự và bullet points
+   - KHÔNG copy nguyên văn từ ví dụ few-shot
+   - Với câu hỏi "làm gì tiếp" → ĐỌC lịch sử để biết user đang ở bước nào, gợi ý bước kế
 
-**VÍ DỤ ĐÚNG:**
-User: "Tôi đã thêm chức năng vào Qs xong"
-[Đọc lịch sử: User vừa hỏi về thêm chức năng Qs]
-Bot: "Tốt! Bây giờ bạn cần cập nhật version trong ForceVersion.cs:
-1. Mở ForceVersion.cs
-2. Tìm 2 dòng [assembly: AssemblyVersion("1.0.0.0")]
-3. Đổi thành version mới như "1.3.0.0"
-4. Lưu (Ctrl+S)"
-
-**VÍ DỤ SAI:**
-Bot: "Bạn cần làm 6 bước: 1. Cập nhật version... 2. Build... 3. Obfuscate..." (❌ Quá dài, user chưa hỏi)
-
-**⚠️ LƯU Ý:** Nếu KHÔNG có lịch sử chat → Hỏi lại "Bạn đã hoàn thành bước nào trong quy trình phát hành?"
-
-=== CÂU HỎI CỦA NGƯỜI DÙNG ===
+=== CÂU HỎI ===
 {query}
 
-=== TRẢ LỜI (CHỈ TRẢ LỜI CÂU HỎI TRÊN) ==="""
+=== TRẢ LỜI ===\n"""
 
 
 def build_greeting_prompt(query: str) -> str:
-    """Build prompt đơn giản cho lời chào hoặc câu hỏi chung chung"""
-    return f"""Bạn là trợ lý AI. User vừa chào hoặc hỏi chung chung.
+    """Build prompt CỰC KỲ NGẮN GỌN cho lời chào - CHỈ 1 CÂU"""
+    return f"""Bạn là trợ lý SimpleBIM. User vừa chào hoặc hỏi chung chung.
 
-⚠️ YÊU CẦU BẮT BUỘC - ĐỌC KỸ:
-1. CHỈ trả lời 1 CÂU duy nhất
-2. Nếu user CHÀO → Chào lại + hỏi cần giúp gì (TỐI ĐA 20 từ)
-3. Nếu user HỎI CHUNG CHUNG → Hỏi lại cần hỗ trợ gì cụ thể (TỐI ĐA 20 từ)
-4. TUYỆT ĐỐI KHÔNG:
-   ❌ Liệt kê "Bước 1", "Bước 2"
-   ❌ Gửi code
-   ❌ Hướng dẫn chi tiết
-   ❌ Hỏi "bạn cần làm gì tiếp"
-   ❌ Đề cập Visual Studio, C#, Commands
-   ❌ Viết quá 2 câu
+⚠️ QUY TẮC BẮT BUỘC:
+- CHỈ trả lời 1 CÂU duy nhất (10-15 từ)
+- KHÔNG liệt kê bước 1, 2, 3
+- KHÔNG hướng dẫn chi tiết
+- KHÔNG đề cập Visual Studio, Commands, code
 
-✅ ĐÚNG:
-User: "xin chào"
-Bot: "Xin chào! Bạn cần hỗ trợ gì về SimpleBIM?"
-
-User: "giúp tôi"
-Bot: "Bạn cần hỗ trợ vấn đề gì cụ thể về SimpleBIM?"
-
-❌ SAI (quá dài):
-"Chào bạn! Tôi hiểu bạn đang muốn bắt đầu... Bước 1: Tạo hoặc chỉnh sửa..."
+✅ MẪU ĐÚNG:
+"Xin chào! Bạn cần hỗ trợ gì về SimpleBIM?"
+"Bạn cần hỗ trợ vấn đề cụ thể nào về SimpleBIM?"
 
 User: {query}
 
-TRẢ LỜI (CHỈ 1 CÂU NGẮN):"""
+TRẢ LỜI (1 CÂU):"""
 
 
 def run_rag_pipeline(query: str) -> Tuple[str, str, List[str]]:

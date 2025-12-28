@@ -46,7 +46,7 @@ class LLMService:
             return LLMConfig(
                 provider="huggingface",
                 api_key=hf_token,
-                model="Qwen/Qwen2.5-7B-Instruct"  # Model miễn phí trên HF
+                model="Qwen/Qwen2.5-72B-Instruct"  # Model miễn phí trên HF
             )
         
         logger.warning("No LLM API key found in environment")
