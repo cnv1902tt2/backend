@@ -120,9 +120,10 @@ class LLMService:
             from huggingface_hub import InferenceClient
             
             if self._hf_client is None:
-                # Khởi tạo client với token
+                # Thay đổi: dùng provider="together" (hoặc "auto" để tự chọn nếu có nhiều)
                 self._hf_client = InferenceClient(
-                    token=self.config.api_key
+                    provider="together",  # Hoặc "auto" nếu bạn muốn router tự chọn provider tốt nhất
+                    token=self.config.api_key  # Dùng token thay api_key cho rõ ràng
                 )
             
             # Build messages
