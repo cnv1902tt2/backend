@@ -9,6 +9,7 @@ class KeyCreateRequest(BaseModel):
 class KeyUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
     note: Optional[str] = None
+    reset_machine: Optional[bool] = False
 
 class KeyResponse(BaseModel):
     key_value: str

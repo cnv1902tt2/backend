@@ -67,6 +67,10 @@ def update_key(key_value: str, payload: KeyUpdateRequest, db: Session = Depends(
         record.is_active = payload.is_active
     if payload.note is not None:
         record.note = payload.note
+    if payload.reset_machine:
+        record.machine_hash = None
+        record.machine_name = None
+        record.ip_address = None
     db.commit()
     db.refresh(record)
     return KeyResponse(**record.__dict__)
@@ -114,6 +118,15 @@ def validate(payload: KeyValidateRequest, db: Session = Depends(get_db)):
             "expired_at": record.expired_at,
             "note": "Key expired"
         }
+    
+    # Kiểm tra machine_hash: mỗi key chỉ được dùng trên 1 máy duy nhất
+    if record.machine_hash and payload.machine_hash and record.machine_hash != payload.machine_hash:
+        return {
+            "valid": False,
+            "is_active": True,
+            "expired_at": record.expired_at,
+            "note": "Key đã được kích hoạt trên máy khác. Liên hệ tác giả để được hỗ trợ."
+        }
 
     # Update thông tin máy
     record.machine_name = payload.machine_name or record.machine_name
@@ -122,7 +135,7 @@ def validate(payload: KeyValidateRequest, db: Session = Depends(get_db)):
     record.cpu_info = payload.cpu_info or record.cpu_info
     record.ip_address = payload.ip_address or record.ip_address
 
-    # Ghi machine_hash nếu chưa có — tránh override lần sau
+    # Ghi machine_hash nếu chưa có — bind key vào máy đầu tiên
     if not record.machine_hash:
         record.machine_hash = payload.machine_hash
 
