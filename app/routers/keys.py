@@ -86,6 +86,16 @@ def delete_key(key_value: str, db: Session = Depends(get_db)):
     return {"detail": "Deleted"}
 
 
+@router.post("/reset-all-machines", dependencies=[Depends(admin_required)])
+def reset_all_machines(db: Session = Depends(get_db)):
+    """Reset machine_hash cho tất cả key (dùng khi thay đổi thuật toán hash)"""
+    count = db.query(KeyRecord).filter(KeyRecord.machine_hash != None).update(
+        {KeyRecord.machine_hash: None, KeyRecord.machine_name: None, KeyRecord.ip_address: None}
+    )
+    db.commit()
+    return {"detail": f"Đã reset {count} key(s)"}
+
+
 @router.post("/validate")
 def validate(payload: KeyValidateRequest, db: Session = Depends(get_db)):
     record = db.query(KeyRecord).filter(
@@ -118,7 +128,7 @@ def validate(payload: KeyValidateRequest, db: Session = Depends(get_db)):
             "expired_at": record.expired_at,
             "note": "Key expired"
         }
-    
+
     # Kiểm tra machine_hash: mỗi key chỉ được dùng trên 1 máy duy nhất
     if record.machine_hash and payload.machine_hash and record.machine_hash != payload.machine_hash:
         return {
